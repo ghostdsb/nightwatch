@@ -1,6 +1,5 @@
 defmodule Nightwatch.Game.Player do
   use GenServer
-  alias Nightwatch.Helpers.Records
   alias Nightwatch.Game.World
 
   @type t :: %Nightwatch.Game.Player{
@@ -25,6 +24,9 @@ defmodule Nightwatch.Game.Player do
   def get_pos(name) do
     GenServer.call(name, "get_pos")
   end
+  def peek(name) do
+    GenServer.call(name, "peek")
+  end
 
   @spec move(atom | pid | {atom, any} | {:via, atom, any}, any) :: :ok
   def move(name, dir) do
@@ -43,6 +45,7 @@ defmodule Nightwatch.Game.Player do
     GenServer.cast(name, {"attack", position})
   end
 
+
   ##############################
   @spec init(String.t()) :: {:ok, Nightwatch.Game.Player.t() }
   def init(id) do
@@ -58,6 +61,10 @@ defmodule Nightwatch.Game.Player do
 
   def handle_call("get_pos", _from, state) do
     {:reply, state.position, state}
+  end
+
+  def handle_call("peek", _from, state) do
+    {:reply, state, state}
   end
 
   def handle_cast({"move", {x,y}}, state) do
@@ -90,22 +97,14 @@ defmodule Nightwatch.Game.Player do
 
   def handle_cast("kill", state) do
     World.kill_player(state.id)
+    state = %{state | status: :dead}
     # Process.send_after(self(), {"respawn", state.id}, 5_000)
     {:noreply, state}
   end
 
-  def handle_info({:DOWN, _, _, reason}, state) do
-    reason
-    |> IO.inspect(label: "proc_dead")
+  def handle_info({:DOWN, _, _, _reason}, state) do
     {:noreply, state}
   end
-
-  def handle_info({"respawn", player_id}, state) do
-    player_id |> IO.inspect(label: "respawn playerOD")
-    # World.enter_player()
-    {:noreply, state}
-  end
-
   #############################
   @spec get_empty_pos :: {number(), number()}
   def get_empty_pos() do

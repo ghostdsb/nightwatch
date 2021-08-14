@@ -16,7 +16,6 @@ defmodule NightwatchWeb.RoomChannel do
     # %{"dir" => %{"x" => -1, "y" => 0}, "id" => "player209"}
     move_direction = msg["dir"]
     Player.move(Records.via_tuple(msg["id"]), {move_direction["x"], move_direction["y"]})
-    |> IO.inspect(label: "move")
     {:noreply, socket}
   end
 

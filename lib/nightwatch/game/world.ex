@@ -115,6 +115,8 @@ defmodule Nightwatch.Game.World do
     process = Records.via_tuple(player_id)
     Process.exit(GenServer.whereis(process), :kill)
 
+    Process.send_after(self(), {"respawn", player_id}, 5_000)
+
     NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_terminated", %{
       id: player_id,
       })
@@ -127,17 +129,25 @@ defmodule Nightwatch.Game.World do
     |> Enum.map(fn {enemy_id, _} ->
       {enemy_id, Player.get_pos(Records.via_tuple(enemy_id))}
     end)
-    |> IO.inspect()
     |> Enum.filter(fn {enemy_id, player_pos} -> affected?(player_pos, attack_position, enemy_id, player_id) end)
-    |> IO.inspect()
     |> Enum.each(fn {enemy_id, _pos} ->  Player.kill(Records.via_tuple(enemy_id)) end)
     {:noreply, state}
   end
 
-  def handle_info({:DOWN, _, here, _pid, reason}, state) do
+  def handle_info({:DOWN, _, _, _pid, _reason}, state) do
 
     {:noreply, state}
   end
+
+  def handle_info({"respawn", player_id}, state) do
+    DynamicSupervisor.start_child(Nightwatch.GameSupervisor, {Player, name: Records.via_tuple(player_id)})
+    |> handle_player_start(player_id, state)
+    |> enter_player_after_respawn(state, player_id)
+
+    {:noreply, state}
+  end
+
+
   #############################
 
   defp get_cell(nil), do: false
@@ -145,11 +155,75 @@ defmodule Nightwatch.Game.World do
   defp get_cell(1), do: true
 
   defp affected?({player_x, player_y}, {player_x, player_y}, player_id, player_id) do
-    IO.inspect(player_id)
     false
   end
   defp affected?({player_x, player_y}, {attack_x, attack_y}, _enemy, _player) do
     abs(player_x-attack_x) <= 1 && abs(player_y-attack_y) <= 1
   end
 
+  def handle_player_start({:ok, _}, player_id, state) do
+
+    {x, y} = Player.get_pos(Records.via_tuple(player_id))
+    map = MapManager.get_map()
+    enemy_details =
+      state.players
+      |> Enum.map(fn {player_id, _} ->
+        {enemy_x, enemy_y} = Player.get_pos(Records.via_tuple(player_id))
+        { player_id, %{x: enemy_x, y: enemy_y}}
+      end)
+      |> Map.new()
+
+      NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_joined", %{
+      id: player_id,
+      map: map,
+      pos: %{x: x, y: y},
+      players: enemy_details
+    })
+  end
+
+  def handle_player_start({:error, {:already_started, _child}}, player_id, state) do
+    :error
+    {x, y} = Player.get_pos(Records.via_tuple(player_id))
+    map = MapManager.get_map()
+    enemy_details =
+      state.players
+      |> Enum.map(fn {player_id, _} ->
+        {enemy_x, enemy_y} = Player.get_pos(Records.via_tuple(player_id))
+        { player_id, %{x: enemy_x, y: enemy_y}}
+      end)
+      |> Map.new()
+
+      NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_joined", %{
+      id: player_id,
+      map: map,
+      pos: %{x: x, y: y},
+      players: enemy_details
+    })
+  end
+
+  def handle_player_start(_rest, _params, _socket) do
+    :ok
+  end
+
+  def enter_player(:ok, player_id) do
+    cond do
+      player?(player_id) -> :ok
+      true -> enter_player(player_id)
+    end
+  end
+
+  def enter_player(:error, _player_id) do
+    nil
+  end
+
+  def enter_player_after_respawn(:ok, state, player_id) do
+    cond do
+      Map.has_key?(state.players, player_id) -> :ok
+      true -> enter_player(player_id)
+    end
+  end
+
+  def enter_player_after_respawn(:error, _state, _player_id) do
+    nil
+  end
 end
