@@ -58,4 +58,9 @@ config :nightwatch, NightwatchWeb.Endpoint,
   http: [port: {:system, "PORT"}], # Possibly not needed, but doesn't hurt
   url: [host: System.get_env("APP_NAME") <> ".gigalixirapp.com", port: 443],
   secret_key_base: Map.fetch!(System.get_env(), "SECRET_KEY_BASE"),
+  check_origin: [
+    "https://ghostdsb.github.io",
+    "https://ghostdsb.github.io/mmo",
+    "http://localhost:8080"
+  ],
   server: true
