@@ -1,11 +1,28 @@
 defmodule Nightwatch.Manager.MapManager do
 
+  # prepare the map from json file in priv folder
+  @spec get_map :: map
   def get_map() do
     grid =
       File.read!("priv/map.json")
       |> Jason.decode!()
 
     make_map(grid["map"])
+  end
+
+  # get an empty cell on the map
+  @spec get_empty_pos(map()) :: tuple()
+  def get_empty_pos(map) do
+    map
+    |> Enum.reduce([], fn {row_id, row_map}, acc ->
+      empties = row_map
+      |> Enum.filter(fn{_col, cell_value} -> cell_value === 1 end)
+      |> Enum.map(fn {col_id, _cell_value} -> {row_id, col_id} end)
+      [empties | acc]
+    end)
+    |> List.flatten()
+    |> Enum.shuffle()
+    |> List.first()
   end
 
   defp make_map(map) do
@@ -22,5 +39,6 @@ defmodule Nightwatch.Manager.MapManager do
     |> Enum.map(fn {tile, col_id} -> {col_id, tile} end)
     |> Map.new()
   end
+
 
 end
