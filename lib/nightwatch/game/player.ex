@@ -1,5 +1,5 @@
 defmodule Nightwatch.Game.Player do
-  use GenServer
+  use GenServer, restart: :transient
   alias Nightwatch.Game.World
 
   @type t :: %Nightwatch.Game.Player{
@@ -15,9 +15,9 @@ defmodule Nightwatch.Game.Player do
   )
 
   ###############################
-  def start_link(name: name) do
+  def start_link([name: name, pos: pos]) do
     {:via, Registry, {Nightwatch.GameRegistry, id}} = name
-    GenServer.start_link(__MODULE__, id, name: name)
+    GenServer.start_link(__MODULE__, [id, pos], name: name)
   end
 
   @spec get_pos(atom | pid | {atom, any} | {:via, atom, any}) :: {number(), number()}
@@ -45,15 +45,18 @@ defmodule Nightwatch.Game.Player do
     GenServer.cast(name, {"attack", position})
   end
 
+  def stop_player_process(name) do
+    GenServer.cast(name, "stop")
+  end
+
 
   ##############################
-  @spec init(String.t()) :: {:ok, Nightwatch.Game.Player.t() }
-  def init(id) do
+  def init([id, pos]) do
     Process.flag(:trap_exit, true)
     player =
       __MODULE__.__struct__(
         id: id,
-        position: get_empty_pos()
+        position: pos
       )
 
     {:ok, player}
@@ -70,6 +73,8 @@ defmodule Nightwatch.Game.Player do
   def handle_cast({"move", {x,y}}, state) do
     {pos_x, pos_y} = state.position
     new_pos = cond do
+      state.status == :dead ->
+        state.position
       World.empty?({pos_x+x, pos_y+y}) ->
         NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "move", %{
           id: state.id,
@@ -91,32 +96,26 @@ defmodule Nightwatch.Game.Player do
   end
 
   def handle_cast({"attack", _position}, state) do
-    World.attack(state.id, state.position)
+    case state.status do
+      :alive ->
+        World.attack(state.id, state.position)
+      _ ->
+        nil
+    end
     {:noreply, state}
   end
 
   def handle_cast("kill", state) do
     World.kill_player(state.id)
     state = %{state | status: :dead}
-    # Process.send_after(self(), {"respawn", state.id}, 5_000)
     {:noreply, state}
+  end
+
+  def handle_info({:EXIT, _, _reason}, state) do
+    {:stop, :normal,  state}
   end
 
   def handle_info({:DOWN, _, _, _reason}, state) do
     {:noreply, state}
-  end
-  #############################
-  @spec get_empty_pos :: {number(), number()}
-  def get_empty_pos() do
-    World.get_map()
-    |> Enum.reduce([], fn {row_id, row_map}, acc ->
-      empties = row_map
-      |> Enum.filter(fn{_col, cell_value} -> cell_value === 1 end)
-      |> Enum.map(fn {col_id, _cell_value} -> {row_id, col_id} end)
-      [empties | acc]
-    end)
-    |> List.flatten()
-    |> Enum.shuffle()
-    |> List.first()
   end
 end

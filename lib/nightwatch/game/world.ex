@@ -23,24 +23,12 @@ defmodule Nightwatch.Game.World do
     GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
   end
 
-  def get_map() do
-    GenServer.call(__MODULE__, "get_map")
-  end
-
-  def get_players() do
-    GenServer.call(__MODULE__, "get_players")
+  def spawn_player(player_id) do
+    GenServer.cast(__MODULE__, {"spawn_player", player_id})
   end
 
   def empty?(coord) do
     GenServer.call(__MODULE__, {"is_empty", coord})
-  end
-
-  def player?(player_id) do
-    GenServer.call(__MODULE__, {"player_present", player_id})
-  end
-
-  def enter_player(player_id) do
-    GenServer.cast(__MODULE__, {"enter_player", player_id})
   end
 
   def remove_player(player_id) do
@@ -65,14 +53,6 @@ defmodule Nightwatch.Game.World do
     }}
   end
 
-  def handle_call("get_map", _from, state) do
-    {:reply, state.game_map, state}
-  end
-
-  def handle_call("get_players", _from, state) do
-    {:reply, state.players, state}
-  end
-
   def handle_call({"is_empty", {x,y}}, _from, state) do
     {:reply, get_cell(state.game_map[y][x]), state}
   end
@@ -81,47 +61,23 @@ defmodule Nightwatch.Game.World do
     {:reply, Map.has_key?(state.players, player_id), state}
   end
 
-  def handle_cast({"enter_player", player_id}, state) do
-    process = Records.via_tuple(player_id)
-    Process.monitor(GenServer.whereis(process))
-    state = %{state | players: Map.update(state.players, player_id, 1, &(&1+1))}
+  def handle_cast({"spawn_player", player_id}, state) do
+    state = spawn_player_process(player_id, state)
     {:noreply, state}
   end
 
-
   def handle_cast({"remove_player", player_id}, state) do
-
-    state = case Map.get(state.players, player_id) do
-      1 ->
-        process = Records.via_tuple(player_id)
-        Process.exit(GenServer.whereis(process), :kill)
-
-        NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_terminated", %{
-          id: player_id,
-          })
-        %{state | players: Map.delete(state.players, player_id)}
-
-      _ ->
-          %{state | players: Map.update(state.players, player_id, 1, &{&1-1})}
-    end
-
-      {:noreply, state}
-
+    state = remove_player_from_map(player_id, state)
+    {:noreply, state}
   end
 
   def handle_cast({"kill_player", player_id}, state) do
-
     state = %{state | players: Map.delete(state.players, player_id)}
     process = Records.via_tuple(player_id)
     Process.exit(GenServer.whereis(process), :kill)
-
     Process.send_after(self(), {"respawn", player_id}, 5_000)
-
-    NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_terminated", %{
-      id: player_id,
-      })
+    NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_terminated", %{ id: player_id })
     {:noreply, state}
-
   end
 
   def handle_cast({"attack", player_id, attack_position}, state) do
@@ -134,19 +90,14 @@ defmodule Nightwatch.Game.World do
     {:noreply, state}
   end
 
-  def handle_info({:DOWN, _, _, _pid, _reason}, state) do
-
-    {:noreply, state}
-  end
-
   def handle_info({"respawn", player_id}, state) do
-    DynamicSupervisor.start_child(Nightwatch.GameSupervisor, {Player, name: Records.via_tuple(player_id)})
-    |> handle_player_start(player_id, state)
-    |> enter_player_after_respawn(state, player_id)
-
+    state = spawn_player_process(player_id, state)
     {:noreply, state}
   end
 
+  def handle_info({:DOWN, _, _, _pid, _}, state) do
+    {:noreply, state}
+  end
 
   #############################
 
@@ -161,28 +112,27 @@ defmodule Nightwatch.Game.World do
     abs(player_x-attack_x) <= 1 && abs(player_y-attack_y) <= 1
   end
 
-  def handle_player_start({:ok, _}, player_id, state) do
-
-    {x, y} = Player.get_pos(Records.via_tuple(player_id))
-    map = MapManager.get_map()
-    enemy_details =
-      state.players
-      |> Enum.map(fn {player_id, _} ->
-        {enemy_x, enemy_y} = Player.get_pos(Records.via_tuple(player_id))
-        { player_id, %{x: enemy_x, y: enemy_y}}
-      end)
-      |> Map.new()
-
-      NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_joined", %{
-      id: player_id,
-      map: map,
-      pos: %{x: x, y: y},
-      players: enemy_details
-    })
+  # spawn a player genserver and add to GameSupervisor
+  defp spawn_player_process(player_id, state) do
+    DynamicSupervisor.start_child(Nightwatch.GameSupervisor, {Player, [name: Records.via_tuple(player_id), pos: MapManager.get_empty_pos(state.game_map)]})
+    |> broadcast_player_to_clients(player_id, state)
+    |> add_player_to_world_state(player_id, state)
   end
 
-  def handle_player_start({:error, {:already_started, _child}}, player_id, state) do
+  # broadcast to all connected players about the new player
+  defp broadcast_player_to_clients({:ok, _}, player_id, state) do
+    broadcast_player(player_id, state)
+  end
+
+  defp broadcast_player_to_clients({:error, {:already_started, _child}}, player_id, state) do
+    broadcast_player(player_id, state)
+  end
+
+  defp broadcast_player_to_clients({:error, _}, _player_id, _state) do
     :error
+  end
+
+  defp broadcast_player(player_id, state) do
     {x, y} = Player.get_pos(Records.via_tuple(player_id))
     map = MapManager.get_map()
     enemy_details =
@@ -201,29 +151,30 @@ defmodule Nightwatch.Game.World do
     })
   end
 
-  def handle_player_start(_rest, _params, _socket) do
-    :ok
+  # add player to world map with;
+  #   key -> player_id and
+  #   value -> incremental reference count
+  defp add_player_to_world_state(:ok, player_id, state) do
+    process = Records.via_tuple(player_id)
+    Process.monitor(GenServer.whereis(process))
+    players = Map.update(state.players, player_id, 1, &(&1+1))
+    %{state | players: players}
   end
 
-  def enter_player(:ok, player_id) do
-    cond do
-      player?(player_id) -> :ok
-      true -> enter_player(player_id)
+  # remove player process when reference count of player becomes 0
+  defp remove_player_from_map(player_id, state) do
+    case Map.get(state.players, player_id) do
+      1 ->
+        process = Records.via_tuple(player_id)
+        Process.exit(GenServer.whereis(process), :normal)
+
+        NightwatchWeb.Endpoint.broadcast!("game:nw_mmo", "player_terminated", %{
+          id: player_id,
+          })
+        %{state | players: Map.delete(state.players, player_id)}
+
+      _ ->
+          %{state | players: Map.update(state.players, player_id, 1, &(&1-1))}
     end
-  end
-
-  def enter_player(:error, _player_id) do
-    nil
-  end
-
-  def enter_player_after_respawn(:ok, state, player_id) do
-    cond do
-      Map.has_key?(state.players, player_id) -> :ok
-      true -> enter_player(player_id)
-    end
-  end
-
-  def enter_player_after_respawn(:error, _state, _player_id) do
-    nil
   end
 end
