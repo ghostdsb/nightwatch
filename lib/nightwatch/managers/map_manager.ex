@@ -17,7 +17,7 @@ defmodule Nightwatch.Manager.MapManager do
     |> Enum.reduce([], fn {row_id, row_map}, acc ->
       empties = row_map
       |> Enum.filter(fn{_col, cell_value} -> cell_value === 1 end)
-      |> Enum.map(fn {col_id, _cell_value} -> {row_id, col_id} end)
+      |> Enum.map(fn {col_id, _cell_value} -> {col_id, row_id} end)
       [empties | acc]
     end)
     |> List.flatten()
