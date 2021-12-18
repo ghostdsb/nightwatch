@@ -4,7 +4,8 @@ defmodule Nightwatch.Manager.MapManager do
   @spec get_map :: map
   def get_map() do
     grid =
-      File.read!("priv/map.json")
+      File.read!("#{:code.priv_dir(:nightwatch)}/map.json")
+      # File.read!("priv/map.json")
       |> Jason.decode!()
 
     make_map(grid["map"])

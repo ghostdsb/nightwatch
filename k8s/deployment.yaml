@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nightwatchweb2
+  labels:
+    app: nightwatch
+spec:
+  selector:
+    matchLabels:
+      app: nightwatch
+      tier: web
+  template:
+    metadata:
+      labels:
+        app: nightwatch
+        tier: web
+    spec:
+      containers:
+      - name: nightwatch-app
+        image: nightwatch-0.1.3_dev-staging
+        ports:
+        - containerPort: 4000
+        resources:
+          requests:
+            cpu: 200m
