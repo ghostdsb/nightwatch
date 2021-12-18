@@ -20,11 +20,9 @@ defmodule NightwatchWeb.Router do
   end
 
   # Other scopes may use custom stacks.
-  scope "/api", NightwatchWeb do
-    pipe_through :api
-
-    post "/femo", WebhookController, :femo
-  end
+  # scope "/api", NightwatchWeb do
+  #   pipe_through :api
+  # end
 
   # Enables LiveDashboard only for development
   #
